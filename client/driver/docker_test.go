@@ -96,28 +96,28 @@ func dockerSetup(t *testing.T, task *structs.Task) (*docker.Client, DriverHandle
 		t.Fatalf("Failed to initialize client: %s\nStack\n%s", err, debug.Stack())
 	}
 
-	driverCtx, execCtx := testDriverContexts(task)
-	driverCtx.config.Options = map[string]string{"docker.cleanup.image": "false"}
-	driver := NewDockerDriver(driverCtx)
-	copyImage(execCtx, task, "busybox.tar", t)
+	tctx := testDriverContexts(t, task)
+	tctx.DriverCtx.config.Options = map[string]string{"docker.cleanup.image": "false"}
+	driver := NewDockerDriver(tctx.DriverCtx)
+	copyImage(t, tctx.ExecCtx.TaskDir, "busybox.tar")
 
-	if err := driver.Prestart(execCtx, task); err != nil {
-		execCtx.AllocDir.Destroy()
+	if err := driver.Prestart(tctx.ExecCtx, task); err != nil {
+		tctx.AllocDir.Destroy()
 		t.Fatalf("error in prestart: %v", err)
 	}
-	handle, err := driver.Start(execCtx, task)
+	handle, err := driver.Start(tctx.ExecCtx, task)
 	if err != nil {
-		execCtx.AllocDir.Destroy()
+		tctx.AllocDir.Destroy()
 		t.Fatalf("Failed to start driver: %s\nStack\n%s", err, debug.Stack())
 	}
 	if handle == nil {
-		execCtx.AllocDir.Destroy()
+		tctx.AllocDir.Destroy()
 		t.Fatalf("handle is nil\nStack\n%s", debug.Stack())
 	}
 
 	cleanup := func() {
 		handle.Kill()
-		execCtx.AllocDir.Destroy()
+		tctx.AllocDir.Destroy()
 	}
 
 	return client, handle, cleanup
@@ -125,10 +125,10 @@ func dockerSetup(t *testing.T, task *structs.Task) (*docker.Client, DriverHandle
 
 // This test should always pass, even if docker daemon is not available
 func TestDockerDriver_Fingerprint(t *testing.T) {
-	driverCtx, execCtx := testDriverContexts(&structs.Task{Name: "foo", Resources: basicResources})
-	driverCtx.config.Options = map[string]string{"docker.cleanup.image": "false"}
-	defer execCtx.AllocDir.Destroy()
-	d := NewDockerDriver(driverCtx)
+	ctx := testDriverContexts(t, &structs.Task{Name: "foo", Resources: basicResources})
+	ctx.DriverCtx.config.Options = map[string]string{"docker.cleanup.image": "false"}
+	defer ctx.AllocDir.Destroy()
+	d := NewDockerDriver(ctx.DriverCtx)
 	node := &structs.Node{
 		Attributes: make(map[string]string),
 	}
@@ -165,16 +165,16 @@ func TestDockerDriver_StartOpen_Wait(t *testing.T) {
 		Resources: basicResources,
 	}
 
-	driverCtx, execCtx := testDriverContexts(task)
-	driverCtx.config.Options = map[string]string{"docker.cleanup.image": "false"}
-	defer execCtx.AllocDir.Destroy()
-	d := NewDockerDriver(driverCtx)
-	copyImage(execCtx, task, "busybox.tar", t)
+	ctx := testDriverContexts(t, task)
+	ctx.DriverCtx.config.Options = map[string]string{"docker.cleanup.image": "false"}
+	defer ctx.AllocDir.Destroy()
+	d := NewDockerDriver(ctx.DriverCtx)
+	copyImage(t, ctx.ExecCtx.TaskDir, "busybox.tar")
 
-	if err := d.Prestart(execCtx, task); err != nil {
+	if err := d.Prestart(ctx.ExecCtx, task); err != nil {
 		t.Fatalf("error in prestart: %v", err)
 	}
-	handle, err := d.Start(execCtx, task)
+	handle, err := d.Start(ctx.ExecCtx, task)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestDockerDriver_StartOpen_Wait(t *testing.T) {
 	defer handle.Kill()
 
 	// Attempt to open
-	handle2, err := d.Open(execCtx, handle.ID())
+	handle2, err := d.Open(ctx.ExecCtx, handle.ID())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -255,18 +255,18 @@ func TestDockerDriver_Start_LoadImage(t *testing.T) {
 		},
 	}
 
-	driverCtx, execCtx := testDriverContexts(task)
-	driverCtx.config.Options = map[string]string{"docker.cleanup.image": "false"}
-	defer execCtx.AllocDir.Destroy()
-	d := NewDockerDriver(driverCtx)
+	ctx := testDriverContexts(t, task)
+	ctx.DriverCtx.config.Options = map[string]string{"docker.cleanup.image": "false"}
+	defer ctx.AllocDir.Destroy()
+	d := NewDockerDriver(ctx.DriverCtx)
 
 	// Copy the image into the task's directory
-	copyImage(execCtx, task, "busybox.tar", t)
+	copyImage(t, ctx.ExecCtx.TaskDir, "busybox.tar")
 
-	if err := d.Prestart(execCtx, task); err != nil {
+	if err := d.Prestart(ctx.ExecCtx, task); err != nil {
 		t.Fatalf("error in prestart: %v", err)
 	}
-	handle, err := d.Start(execCtx, task)
+	handle, err := d.Start(ctx.ExecCtx, task)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestDockerDriver_Start_LoadImage(t *testing.T) {
 	}
 
 	// Check that data was written to the shared alloc directory.
-	outputFile := filepath.Join(execCtx.AllocDir.LogDir(), "busybox-demo.stdout.0")
+	outputFile := filepath.Join(ctx.ExecCtx.TaskDir.LogDir, "busybox-demo.stdout.0")
 	act, err := ioutil.ReadFile(outputFile)
 	if err != nil {
 		t.Fatalf("Couldn't read expected output: %v", err)
@@ -1165,8 +1165,7 @@ func TestDockerDriver_VolumesEnabled(t *testing.T) {
 	}
 }
 
-func copyImage(execCtx *ExecContext, task *structs.Task, image string, t *testing.T) {
-	taskDir, _ := execCtx.AllocDir.TaskDirs[task.Name]
-	dst := filepath.Join(taskDir, allocdir.TaskLocal, image)
+func copyImage(t *testing.T, taskDir *allocdir.TaskDir, image string) {
+	dst := filepath.Join(taskDir.LocalDir, image)
 	copyFile(filepath.Join("./test-resources/docker", image), dst, t)
 }
