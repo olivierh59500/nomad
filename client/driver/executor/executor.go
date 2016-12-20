@@ -255,6 +255,9 @@ func (e *UniversalExecutor) LaunchCmd(command *ExecCommand) (*ProcessState, erro
 		}
 	}
 
+	// set the task dir as the working directory for the command
+	e.cmd.Dir = e.ctx.TaskDir
+
 	e.ctx.TaskEnv.Build()
 	// configuring the chroot, resource container, and start the plugin
 	// process in the chroot.
@@ -269,6 +272,8 @@ func (e *UniversalExecutor) LaunchCmd(command *ExecCommand) (*ProcessState, erro
 		return nil, err
 	}
 
+	e.logger.Printf("[DEBUG] executor: XXX 1")
+
 	// Setup the loggers
 	if err := e.configureLoggers(); err != nil {
 		return nil, err
@@ -276,17 +281,26 @@ func (e *UniversalExecutor) LaunchCmd(command *ExecCommand) (*ProcessState, erro
 	e.cmd.Stdout = e.lro
 	e.cmd.Stderr = e.lre
 
+	e.logger.Printf("[DEBUG] executor: XXX 2")
+
 	// Look up the binary path and make it executable
 	absPath, err := e.lookupBin(e.ctx.TaskEnv.ReplaceEnv(command.Cmd))
 	if err != nil {
 		return nil, err
 	}
 
+	e.logger.Printf("[DEBUG] executor: XXX abs: %q", absPath)
+
 	if err := e.makeExecutable(absPath); err != nil {
 		return nil, err
 	}
 
 	path := absPath
+
+	e.logger.Printf("[DEBUG] executor: XXX cmd.Path=%q", path)
+	e.logger.Printf("[DEBUG] executor: XXX cmd.Args=%q", e.cmd.Args)
+	e.logger.Printf("[DEBUG] executor: XXX cmd.Dir= %q", e.cmd.Dir)
+	e.logger.Printf("[DEBUG] executor: XXX cmd.Sys= %#v", e.cmd.SysProcAttr)
 
 	// Determine the path to run as it may have to be relative to the chroot.
 	if e.fsIsolationEnforced {
@@ -302,9 +316,14 @@ func (e *UniversalExecutor) LaunchCmd(command *ExecCommand) (*ProcessState, erro
 	e.cmd.Args = append([]string{e.cmd.Path}, e.ctx.TaskEnv.ParseAndReplace(command.Args)...)
 	e.cmd.Env = e.ctx.TaskEnv.EnvList()
 
+	e.logger.Printf("[DEBUG] executor: XXX cmd.Path=%q", path)
+	e.logger.Printf("[DEBUG] executor: XXX cmd.Args=%q", e.cmd.Args)
+	e.logger.Printf("[DEBUG] executor: XXX cmd.Dir= %q", e.cmd.Dir)
+	e.logger.Printf("[DEBUG] executor: XXX cmd.Sys= %#v", e.cmd.SysProcAttr)
+
 	// Start the process
 	if err := e.cmd.Start(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to start command path=%q --- args=%q: %v", path, e.cmd.Args, err)
 	}
 	go e.collectPids()
 	go e.wait()
@@ -317,12 +336,15 @@ func (e *UniversalExecutor) configureLoggers() error {
 	e.rotatorLock.Lock()
 	defer e.rotatorLock.Unlock()
 
+	e.logger.Printf("[DEBUG] executor: XXX logdir= %q", e.ctx.LogDir)
+	e.logger.Printf("[DEBUG] executor: XXX task  = %q", e.ctx.Task.Name)
+
 	logFileSize := int64(e.ctx.Task.LogConfig.MaxFileSizeMB * 1024 * 1024)
 	if e.lro == nil {
 		lro, err := logging.NewFileRotator(e.ctx.LogDir, fmt.Sprintf("%v.stdout", e.ctx.Task.Name),
 			e.ctx.Task.LogConfig.MaxFiles, logFileSize, e.logger)
 		if err != nil {
-			return err
+			return fmt.Errorf("error creating new stdout log file for %q: %v", e.ctx.Task.Name, err)
 		}
 		e.lro = lro
 	}
@@ -331,7 +353,7 @@ func (e *UniversalExecutor) configureLoggers() error {
 		lre, err := logging.NewFileRotator(e.ctx.LogDir, fmt.Sprintf("%v.stderr", e.ctx.Task.Name),
 			e.ctx.Task.LogConfig.MaxFiles, logFileSize, e.logger)
 		if err != nil {
-			return err
+			return fmt.Errorf("error creating new stderr log file for %q: %v", e.ctx.Task.Name, err)
 		}
 		e.lre = lre
 	}

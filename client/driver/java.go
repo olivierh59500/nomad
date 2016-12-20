@@ -215,6 +215,8 @@ func (d *JavaDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, 
 		Driver:  "java",
 		AllocID: ctx.AllocID,
 		Task:    task,
+		TaskDir: ctx.TaskDir.Dir,
+		LogDir:  ctx.TaskDir.LogDir,
 	}
 	if err := execIntf.SetContext(executorCtx); err != nil {
 		pluginClient.Kill()

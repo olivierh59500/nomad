@@ -62,7 +62,6 @@ func copyFile(src, dst string, t *testing.T) {
 	if err := out.Sync(); err != nil {
 		t.Fatalf("copying %v -> %v failed: %v", src, dst, err)
 	}
-	return
 }
 
 func testLogger() *log.Logger {
@@ -95,11 +94,11 @@ func testDriverContexts(t *testing.T, task *structs.Task) *testContext {
 	alloc := mock.Alloc()
 
 	// Build a temp driver so we can call FSIsolation and build the task dir
-	tmpdrv, err := NewDriver(task.Driver, nil)
+	tmpdrv, err := NewDriver(task.Driver, NewEmptyDriverContext())
 	if err != nil {
 		allocDir.Destroy()
-		t.Fatalf("NewDriver(%q, nil) failed: %v", task.Driver, nil)
-		return nil, nil
+		t.Fatalf("NewDriver(%q, nil) failed: %v", task.Driver, err)
+		return nil
 	}
 
 	// Build the task dir
@@ -107,16 +106,16 @@ func testDriverContexts(t *testing.T, task *structs.Task) *testContext {
 	if err := td.Build(config.DefaultChrootEnv, tmpdrv.FSIsolation()); err != nil {
 		allocDir.Destroy()
 		t.Fatalf("TaskDir.Build(%#v, %q) failed: %v", config.DefaultChrootEnv, tmpdrv.FSIsolation())
-		return nil, nil
+		return nil
 	}
 
 	execCtx := NewExecContext(td, alloc.ID)
 
-	taskEnv, err := GetTaskEnv(allocDir, cfg.Node, task, alloc, "")
+	taskEnv, err := GetTaskEnv(td, cfg.Node, task, alloc, "")
 	if err != nil {
 		allocDir.Destroy()
 		t.Fatalf("GetTaskEnv() failed: %v", err)
-		return nil, nil
+		return nil
 	}
 
 	logger := testLogger()
@@ -130,7 +129,8 @@ func testDriverContexts(t *testing.T, task *structs.Task) *testContext {
 
 func TestDriver_GetTaskEnv(t *testing.T) {
 	task := &structs.Task{
-		Name: "Foo",
+		Name:   "Foo",
+		Driver: "mock",
 		Env: map[string]string{
 			"HELLO": "world",
 			"lorem": "ipsum",
